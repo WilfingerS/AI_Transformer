@@ -1,12 +1,12 @@
 import torch # Pytorch for encoding data set and storing in .Tensor
              # https://pytorch.org/get-started/locally/
-             
+
 from bigram_language_model import BigramLanguageModel as BLM
 
 #seeding for reproducibility
 torch.manual_seed(1337)
 # Consntant variables / Hyperparameters
-BATCH_SIZE = 4 # indepents seq will proccess in parallel
+BATCH_SIZE = 32 # indepents seq will proccess in parallel
 BLOCK_SIZE = 8 # max length for predictions
 
 # Getting dataset from input.txt in the resource folder
@@ -44,6 +44,8 @@ def getBatch(split):
 
 
 xb, yb = getBatch('train')
+m = BLM(vocabSize)
+logits,loss = m(xb,yb)
 """
     Testing Purposes:
 print('inputs:')
@@ -61,10 +63,24 @@ for b in range(BATCH_SIZE): # batch dimension
         target = yb[b,t]
         print(f"when input is {context.tolist()} the target: {target}")
 
-"""
-
-m = BLM(vocabSize)
-logits,loss = m(xb,yb)
 print(logits.shape)
 print(loss)
-print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))
+print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))"
+"""
+
+optimizer = torch.optim.AdamW(m.parameters(),lr=1e-3)
+"""
+for steps in range(100): # increase number of steps for good results...
+
+    # sample a batch of data
+    xb, yb = getBatch('train')
+
+    # evaluate the loss
+    logits, loss = m(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+print(loss.item())
+print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=500)[0].tolist()))"
+"""
