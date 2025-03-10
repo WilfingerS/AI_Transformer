@@ -84,3 +84,4 @@ for steps in range(100): # increase number of steps for good results...
 print(loss.item())
 print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=500)[0].tolist()))"
 """
+print("heyyoooo")
