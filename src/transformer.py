@@ -1,87 +1,94 @@
-import torch # Pytorch for encoding data set and storing in .Tensor
-             # https://pytorch.org/get-started/locally/
-
-from bigram_language_model import BigramLanguageModel as BLM
-
-#seeding for reproducibility
-torch.manual_seed(1337)
-# Consntant variables / Hyperparameters
-BATCH_SIZE = 32 # indepents seq will proccess in parallel
-BLOCK_SIZE = 8 # max length for predictions
-
-# Getting dataset from input.txt in the resource folder
-with open('resource\input.txt','r',encoding='utf-8') as f:
-    text = f.read()
-
-chars = sorted(list(set(text))) #get unique characters
-vocabSize = len(chars)
-# Mapping Char->Int (vice versa)
-strToInt = {ch:i for i,ch in enumerate(chars)}
-intToStr = {i:ch for i,ch in enumerate(chars)}
-encode = lambda s: [strToInt[c] for c in s] # take the string and output list of ints
-decode = lambda l: ''.join([intToStr[i] for i in l]) # take the list of intergers convert it to a string
-
-data = torch.tensor(encode(text),dtype=torch.long) # encrypts data set
-
-# Data Training / Validation
-n = int(.9 * len(data)) # 90% of data is for training, rest validation
-# Lets look into what this means ^^^ -SW
-train_data = data[:n] 
-val_data = data[n:]
-x = train_data[:BLOCK_SIZE]
-y = train_data[1:BLOCK_SIZE+1]
-
-# Functions
-def getBatch(split):
-      data = train_data
-      if split != 'train':
-           data = val_data
-
-      ix = torch.randint(len(data) - BLOCK_SIZE,(BATCH_SIZE,))
-      x = torch.stack([data[i:i+BLOCK_SIZE] for i in ix])
-      y = torch.stack([data[i+1:i+(BLOCK_SIZE+1)] for i in ix])
-      return x,y
+import torch
+import torch.nn as nn
+from fileutils import loadData
+from torch.nn import functional as F
 
 
-xb, yb = getBatch('train')
-m = BLM(vocabSize)
-logits,loss = m(xb,yb)
-"""
-    Testing Purposes:
-print('inputs:')
-print(xb.shape)
-print(xb)
-print('targets:')
-print(yb.shape)
-print(yb)
 
-print('----')
+class Transformer():
+    def __init__(self):
+        super().__init__()
+        # hyperparameters
+        data = loadData()
+        print(data)
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        # ------------
+        torch.manual_seed(data["seed"])
 
-for b in range(BATCH_SIZE): # batch dimension
-    for t in range(BLOCK_SIZE): # time dimension
-        context = xb[b, :t+1]
-        target = yb[b,t]
-        print(f"when input is {context.tolist()} the target: {target}")
+        # wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
+        with open(data["input_file"], 'r', encoding='utf-8') as f:
+            text = f.read()
 
-print(logits.shape)
-print(loss)
-print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=100)[0].tolist()))"
-"""
+        # here are all the unique characters that occur in this text
+        chars = sorted(list(set(text)))
+        vocab_size = len(chars)
 
-optimizer = torch.optim.AdamW(m.parameters(),lr=1e-3)
-"""
-for steps in range(100): # increase number of steps for good results...
+        # create a mapping from characters to integers
+        stoi = { ch:i for i,ch in enumerate(chars) }
+        itos = { i:ch for i,ch in enumerate(chars) }
+        encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
+        decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
 
-    # sample a batch of data
-    xb, yb = getBatch('train')
+        # Train and test splits
+        data = torch.tensor(encode(text), dtype=torch.long)
+        n = int(0.9*len(data)) # first 90% will be train, rest val
+        train_data = data[:n]
+        val_data = data[n:]
 
-    # evaluate the loss
-    logits, loss = m(xb, yb)
-    optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
+        # data loading
+        def get_batch(split):
+            # generate a small batch of data of inputs x and targets y
+            data = train_data if split == 'train' else val_data
+            ix = torch.randint(len(data) - data["block_size"], (data["batch_size"],))
+            x = torch.stack([data[i:i+data["block_size"]] for i in ix])
+            y = torch.stack([data[i+1:i+data["block_size"]+1] for i in ix])
+            x, y = x.to(device), y.to(device)
+            return x, y
 
-print(loss.item())
-print(decode(m.generate(idx = torch.zeros((1, 1), dtype=torch.long), max_new_tokens=500)[0].tolist()))"
-"""
-print("heyyoooo")
+        @torch.no_grad()
+        def estimate_loss():
+            out = {}
+            model.eval()
+            for split in ['train', 'val']:
+                losses = torch.zeros(data["eval_iters"])
+                for k in range(data["eval_iters"]):
+                    X, Y = get_batch(split)
+                    logits, loss = model(X, Y)
+                    losses[k] = loss.item()
+                out[split] = losses.mean()
+            model.train()
+            return out
+
+
+
+
+        from helper import BigramLanguageModel
+        model = BigramLanguageModel(vocab_size)
+        m = model.to(device)
+        # print the number of parameters in the model
+        print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
+
+        # create a PyTorch optimizer
+        print(data["learning_rate"])
+        learning_rate = data["learning_rate"]
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+        for iter in range(data["max_iters"]):
+
+            # every once in a while evaluate the loss on train and val sets
+            if iter % data["eval_interval"] == 0 or iter == data["max_iters"] - 1:
+                losses = estimate_loss()
+                print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+            # sample a batch of data
+            xb, yb = get_batch('train')
+
+            # evaluate the loss
+            logits, loss = model(xb, yb)
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+
+        # generate from the model
+        context = torch.zeros((1, 1), dtype=torch.long, device=device)
+        print(decode(m.generate(context, max_new_tokens=2000)[0].tolist()))
